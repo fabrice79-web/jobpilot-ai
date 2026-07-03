@@ -72,3 +72,4 @@ def score_job(job: Dict[str, Any], keyword: str) -> int:
         score += 5
 
     return score
+

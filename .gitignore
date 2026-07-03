@@ -5,6 +5,17 @@ venv/
 # Cache Python
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+
+# Outils Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Couverture de tests
+.coverage
+htmlcov/
 
 # VS Code
 .vscode/
