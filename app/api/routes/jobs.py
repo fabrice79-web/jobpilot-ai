@@ -4,7 +4,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Query, HTTPException
 
-from app.services.france_travail import search_france_travail
+from app.services.france_travail import search_france_travail, get_types_contrats
 from app.services.jobs_service import score_job, get_job_by_id
 
 router = APIRouter()
@@ -51,3 +51,9 @@ def get_job(job_id: str) -> dict:
         raise HTTPException(status_code=404, detail=JOB_NOT_FOUND_MESSAGE)
 
     return job
+
+
+@router.get("/debug/types-contrats")
+def debug_types_contrats() -> list:
+    """Route temporaire pour explorer le référentiel des types de contrats."""
+    return get_types_contrats()

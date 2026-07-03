@@ -156,3 +156,23 @@ def get_offer_by_id(offer_id: str) -> dict | None:
         return None
 
     return _normalize_offer(response.json())
+
+REFERENTIEL_TYPES_CONTRATS_URL = f"{API_BASE_URL}/referentiel/typesContrats"
+
+
+def get_types_contrats() -> list[dict]:
+    """Récupère le référentiel officiel des types de contrats (CDI, CDD, MIS, etc.)."""
+    headers = _auth_headers()
+
+    if headers is None:
+        return []
+
+    try:
+        response = requests.get(REFERENTIEL_TYPES_CONTRATS_URL, headers=headers, timeout=REQUEST_TIMEOUT)
+    except requests.RequestException:
+        return []
+
+    if response.status_code != 200:
+        return []
+
+    return response.json()
