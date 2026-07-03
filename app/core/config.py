@@ -1,13 +1,15 @@
-from dotenv import load_dotenv
-import os
+"""Configuration centralisée de l'application, chargée depuis les variables d'environnement."""
 
-# Charge le fichier .env
-load_dotenv()
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings:
-    FRANCE_TRAVAIL_CLIENT_ID = os.getenv("FRANCE_TRAVAIL_CLIENT_ID")
-    FRANCE_TRAVAIL_CLIENT_SECRET = os.getenv("FRANCE_TRAVAIL_CLIENT_SECRET")
+class Settings(BaseSettings):
+    """Paramètres de configuration de JobPilot AI."""
+
+    france_travail_client_id: str
+    france_travail_client_secret: str
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()

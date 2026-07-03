@@ -1,9 +1,10 @@
 """Service d'accès à l'API France Travail (offres d'emploi)."""
 
-import os
 import time
 
 import requests
+
+from app.core.config import settings
 
 API_BASE_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres"
 SEARCH_ENDPOINT = f"{API_BASE_URL}/search"
@@ -45,16 +46,10 @@ def _normalize_offer(job: dict) -> dict:
 
 def _fetch_new_token() -> str | None:
     """Demande un nouveau token OAuth2 auprès de France Travail."""
-    client_id = os.getenv("FRANCE_TRAVAIL_CLIENT_ID")
-    client_secret = os.getenv("FRANCE_TRAVAIL_CLIENT_SECRET")
-
-    if not client_id or not client_secret:
-        return None
-
     payload = {
         "grant_type": "client_credentials",
-        "client_id": client_id,
-        "client_secret": client_secret,
+        "client_id": settings.france_travail_client_id,
+        "client_secret": settings.france_travail_client_secret,
         "scope": TOKEN_SCOPE
     }
 
