@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     france_travail_client_id: str
     france_travail_client_secret: str
+    openrouteservice_api_key: str
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

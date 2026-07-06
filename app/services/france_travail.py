@@ -6,14 +6,24 @@ import requests
 
 from app.core.config import settings
 
-API_BASE_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres"
+API_ROOT_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2"
+API_BASE_URL = f"{API_ROOT_URL}/offres"
 SEARCH_ENDPOINT = f"{API_BASE_URL}/search"
+REFERENTIEL_TYPES_CONTRATS_URL = f"{API_ROOT_URL}/referentiel/typeContrat"
 
 TOKEN_URL = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire"
 TOKEN_SCOPE = "api_offresdemploiv2 o2dsoffre"
 
+GEO_API_URL = "https://geo.api.gouv.fr/communes"
+GEO_API_FIELDS = "code,nom,codeDepartement,codesPostaux,population,centre"
+DEFAULT_SEARCH_RADIUS_KM = 20
+
 REQUEST_TIMEOUT = 10  # secondes — évite le warning Sonar "requests sans timeout"
 TOKEN_EXPIRY_MARGIN = 30  # secondes de marge avant expiration réelle du token
+
+# L'API France Travail répond 206 (Partial Content) sur les recherches paginées
+# et 204 (No Content) quand aucune offre ne correspond : ce ne sont pas des erreurs.
+SUCCESS_STATUS_CODES = (200, 206)
 
 SOURCE_NAME = "france_travail_api"
 
@@ -35,11 +45,15 @@ def _empty_result() -> dict:
 
 def _normalize_offer(job: dict) -> dict:
     """Normalise une offre brute renvoyée par l'API vers notre format interne."""
+    lieu_travail = job.get("lieuTravail", {})
+
     return {
         "id": job.get("id"),
         "title": job.get("intitule"),
         "company": job.get("entreprise", {}).get("nom"),
-        "location": job.get("lieuTravail", {}).get("libelle"),
+        "location": lieu_travail.get("libelle"),
+        "latitude": lieu_travail.get("latitude"),
+        "longitude": lieu_travail.get("longitude"),
         "contract": job.get("typeContrat")
     }
 
@@ -92,12 +106,86 @@ def _auth_headers() -> dict[str, str] | None:
     return {"Authorization": f"Bearer {token}"}
 
 
-def search_france_travail(keyword: str, location: str | None = None) -> dict:
+def search_communes(query: str, limit: int = 10) -> list[dict]:
+    """
+    Recherche toutes les communes correspondant à un nom, pour permettre
+    à l'utilisateur de désambiguïser en cas d'homonymie (ex: Allonnes 49 vs 72).
+
+    :param query: nom de ville tapé par l'utilisateur
+    :param limit: nombre maximum de suggestions à renvoyer
+    :return: liste de {code, nom, codeDepartement, codesPostaux, population, centre}
+    """
+    if not query:
+        return []
+
+    try:
+        response = requests.get(
+            GEO_API_URL,
+            params={
+                "nom": query,
+                "fields": GEO_API_FIELDS,
+                "boost": "population",
+                "limit": limit
+            },
+            timeout=REQUEST_TIMEOUT
+        )
+    except requests.RequestException:
+        return []
+
+    if response.status_code != 200:
+        return []
+
+    return response.json()
+
+
+def _get_commune_code(city_name: str) -> str | None:
+    """
+    Convertit un nom de ville en code commune INSEE via l'API publique
+    geo.api.gouv.fr. En cas d'homonymie, retourne la commune la plus peuplée
+    (comportement de repli — préférer commune_code explicite quand disponible).
+    """
+    communes = search_communes(city_name, limit=1)
+
+    if not communes:
+        return None
+
+    return communes[0].get("code")
+
+
+def get_commune_coordinates(city_name: str) -> tuple[float, float] | None:
+    """
+    Récupère les coordonnées GPS (latitude, longitude) du centre d'une commune,
+    via l'API publique geo.api.gouv.fr.
+    """
+    communes = search_communes(city_name, limit=1)
+
+    if not communes:
+        return None
+
+    centre = communes[0].get("centre", {})
+    coordinates = centre.get("coordinates")  # format GeoJSON : [longitude, latitude]
+
+    if not coordinates or len(coordinates) != 2:
+        return None
+
+    longitude, latitude = coordinates
+    return (latitude, longitude)
+
+
+def search_france_travail(
+    keyword: str,
+    location: str | None = None,
+    radius_km: int = DEFAULT_SEARCH_RADIUS_KM,
+    commune_code: str | None = None
+) -> dict:
     """
     Recherche des offres d'emploi via l'API France Travail.
 
     :param keyword: mot-clé de recherche (obligatoire, peut être vide)
-    :param location: localisation optionnelle
+    :param location: nom de ville optionnel (converti en code commune INSEE si commune_code absent)
+    :param radius_km: rayon de recherche en km autour de la commune
+    :param commune_code: code commune INSEE explicite, prioritaire sur location
+                          (évite toute ambiguïté en cas d'homonymie)
     :return: dict normalisé {source, total, results}
     """
     headers = _auth_headers()
@@ -107,8 +195,11 @@ def search_france_travail(keyword: str, location: str | None = None) -> dict:
 
     params: dict[str, str] = {"motsCles": keyword}
 
-    if location:
-        params["lieux"] = location
+    resolved_commune_code = commune_code or (_get_commune_code(location) if location else None)
+
+    if resolved_commune_code:
+        params["commune"] = resolved_commune_code
+        params["rayon"] = str(radius_km)
 
     try:
         response = requests.get(
@@ -120,7 +211,11 @@ def search_france_travail(keyword: str, location: str | None = None) -> dict:
     except requests.RequestException:
         return _empty_result()
 
-    if response.status_code != 200:
+    # 204 = aucun résultat, mais requête valide : pas de corps JSON à parser
+    if response.status_code == 204:
+        return _empty_result()
+
+    if response.status_code not in SUCCESS_STATUS_CODES:
         return _empty_result()
 
     data = response.json()
@@ -152,27 +247,34 @@ def get_offer_by_id(offer_id: str) -> dict | None:
     except requests.RequestException:
         return None
 
-    if response.status_code != 200:
+    if response.status_code not in SUCCESS_STATUS_CODES:
         return None
 
     return _normalize_offer(response.json())
 
-REFERENTIEL_TYPES_CONTRATS_URL = f"{API_BASE_URL}/referentiel/typesContrats"
 
-
-def get_types_contrats() -> list[dict]:
-    """Récupère le référentiel officiel des types de contrats (CDI, CDD, MIS, etc.)."""
+def get_types_contrats_debug() -> dict | list:
+    """
+    Fonction de debug : lance une recherche large et retourne les filtres
+    disponibles (dont typeContrat) tels que renvoyés par l'API elle-même.
+    """
     headers = _auth_headers()
 
     if headers is None:
-        return []
+        return {"debug": "auth_failed"}
 
     try:
-        response = requests.get(REFERENTIEL_TYPES_CONTRATS_URL, headers=headers, timeout=REQUEST_TIMEOUT)
-    except requests.RequestException:
-        return []
+        response = requests.get(
+            SEARCH_ENDPOINT,
+            params={"motsCles": ""},
+            headers=headers,
+            timeout=REQUEST_TIMEOUT
+        )
+    except requests.RequestException as exc:
+        return {"debug": "request_exception", "detail": str(exc)}
 
-    if response.status_code != 200:
-        return []
+    if response.status_code not in SUCCESS_STATUS_CODES:
+        return {"debug": "bad_status", "status_code": response.status_code, "body": response.text[:500]}
 
-    return response.json()
+    data = response.json()
+    return data.get("filtresPossibles", [])
