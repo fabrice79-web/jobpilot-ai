@@ -18,6 +18,15 @@ GEO_API_URL = "https://geo.api.gouv.fr/communes"
 GEO_API_FIELDS = "code,nom,codeDepartement,codesPostaux,population,centre"
 DEFAULT_SEARCH_RADIUS_KM = 20
 
+# Paris, Lyon et Marseille sont découpés en arrondissements administratifs.
+# L'API France Travail attend le code de chaque arrondissement, pas le code
+# "commune agrégée" que renvoie geo.api.gouv.fr par défaut (ex: 75056 pour Paris).
+ARRONDISSEMENT_CODES = {
+    "75056": [f"751{str(i).zfill(2)}" for i in range(1, 21)],  # Paris
+    "69123": [f"6938{i}" for i in range(1, 10)],               # Lyon
+    "13055": [f"132{str(i).zfill(2)}" for i in range(1, 17)],  # Marseille
+}
+
 REQUEST_TIMEOUT = 10  # secondes — évite le warning Sonar "requests sans timeout"
 TOKEN_EXPIRY_MARGIN = 30  # secondes de marge avant expiration réelle du token
 
@@ -171,6 +180,59 @@ def get_commune_coordinates(city_name: str) -> tuple[float, float] | None:
     longitude, latitude = coordinates
     return (latitude, longitude)
 
+MAX_COMMUNES_PER_REQUEST = 5
+
+
+def _chunk_list(items: list, size: int) -> list[list]:
+    """Découpe une liste en sous-listes de taille maximale 'size'."""
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def _fetch_offers(params: dict[str, str], headers: dict[str, str]) -> list[dict]:
+    """Effectue un appel de recherche unique et renvoie la liste d'offres brutes."""
+    try:
+        response = requests.get(
+            SEARCH_ENDPOINT,
+            params=params,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT
+        )
+    except requests.RequestException:
+        return []
+
+    if response.status_code == 204:
+        return []
+
+    if response.status_code not in SUCCESS_STATUS_CODES:
+        return []
+
+    data = response.json()
+    return data.get("resultats", [])
+
+
+def _fetch_offers_for_arrondissements(
+    base_params: dict[str, str],
+    arrondissements: list[str],
+    headers: dict[str, str]
+) -> list[dict]:
+    """
+    Récupère les offres pour une ville multi-arrondissements (Paris/Lyon/Marseille),
+    en découpant la recherche en plusieurs appels (max 5 communes/requête) et en
+    dédoublonnant les résultats par identifiant d'offre.
+    """
+    all_offers: list[dict] = []
+    seen_ids: set[str] = set()
+
+    for chunk in _chunk_list(arrondissements, MAX_COMMUNES_PER_REQUEST):
+        chunk_params = {**base_params, "commune": ",".join(chunk)}
+        for offer in _fetch_offers(chunk_params, headers):
+            offer_id = offer.get("id")
+            if offer_id not in seen_ids:
+                seen_ids.add(offer_id)
+                all_offers.append(offer)
+
+    return all_offers
+
 
 def search_france_travail(
     keyword: str,
@@ -185,7 +247,6 @@ def search_france_travail(
     :param location: nom de ville optionnel (converti en code commune INSEE si commune_code absent)
     :param radius_km: rayon de recherche en km autour de la commune
     :param commune_code: code commune INSEE explicite, prioritaire sur location
-                          (évite toute ambiguïté en cas d'homonymie)
     :return: dict normalisé {source, total, results}
     """
     headers = _auth_headers()
@@ -193,33 +254,18 @@ def search_france_travail(
     if headers is None:
         return _empty_result()
 
-    params: dict[str, str] = {"motsCles": keyword}
-
     resolved_commune_code = commune_code or (_get_commune_code(location) if location else None)
+    arrondissements = ARRONDISSEMENT_CODES.get(resolved_commune_code) if resolved_commune_code else None
 
-    if resolved_commune_code:
-        params["commune"] = resolved_commune_code
-        params["rayon"] = str(radius_km)
+    base_params: dict[str, str] = {"motsCles": keyword}
 
-    try:
-        response = requests.get(
-            SEARCH_ENDPOINT,
-            params=params,
-            headers=headers,
-            timeout=REQUEST_TIMEOUT
-        )
-    except requests.RequestException:
-        return _empty_result()
-
-    # 204 = aucun résultat, mais requête valide : pas de corps JSON à parser
-    if response.status_code == 204:
-        return _empty_result()
-
-    if response.status_code not in SUCCESS_STATUS_CODES:
-        return _empty_result()
-
-    data = response.json()
-    offers = data.get("resultats", [])
+    if arrondissements:
+        offers = _fetch_offers_for_arrondissements(base_params, arrondissements, headers)
+    else:
+        if resolved_commune_code:
+            base_params["commune"] = resolved_commune_code
+            base_params["rayon"] = str(radius_km)
+        offers = _fetch_offers(base_params, headers)
 
     return {
         "source": SOURCE_NAME,
