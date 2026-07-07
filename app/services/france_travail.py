@@ -63,7 +63,8 @@ def _normalize_offer(job: dict) -> dict:
         "location": lieu_travail.get("libelle"),
         "latitude": lieu_travail.get("latitude"),
         "longitude": lieu_travail.get("longitude"),
-        "contract": job.get("typeContrat")
+        "contract": job.get("typeContrat"),
+        "rome_code": job.get("romeCode")        
     }
 
 
@@ -321,6 +322,7 @@ def get_types_contrats_debug() -> dict | list:
 
     if response.status_code not in SUCCESS_STATUS_CODES:
         return {"debug": "bad_status", "status_code": response.status_code, "body": response.text[:500]}
+
 
     data = response.json()
     return data.get("filtresPossibles", [])
