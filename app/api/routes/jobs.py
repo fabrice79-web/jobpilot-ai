@@ -4,15 +4,14 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Query, HTTPException
 
+
+from app.services.jobs_service import score_job, get_job_by_id
+from app.services.travel_time import get_driving_durations
 from app.services.france_travail import (
     search_france_travail,
-    get_types_contrats_debug,
     get_commune_coordinates,
     search_communes,
 )
-from app.services.jobs_service import score_job, get_job_by_id
-from app.services.travel_time import get_driving_durations
-
 router = APIRouter()
 
 JOB_NOT_FOUND_MESSAGE = "Job not found"
@@ -134,7 +133,3 @@ def get_job(job_id: str) -> dict:
     return job
 
 
-@router.get("/debug/types-contrats")
-def debug_types_contrats() -> dict | list:
-    """Route temporaire pour explorer les filtres/types de contrats disponibles."""
-    return get_types_contrats_debug()

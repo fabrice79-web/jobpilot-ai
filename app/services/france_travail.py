@@ -9,7 +9,7 @@ from app.core.config import settings
 API_ROOT_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2"
 API_BASE_URL = f"{API_ROOT_URL}/offres"
 SEARCH_ENDPOINT = f"{API_BASE_URL}/search"
-REFERENTIEL_TYPES_CONTRATS_URL = f"{API_ROOT_URL}/referentiel/typeContrat"
+
 
 TOKEN_URL = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire"
 TOKEN_SCOPE = "api_offresdemploiv2 o2dsoffre"
@@ -273,56 +273,3 @@ def search_france_travail(
         "total": len(offers),
         "results": [_normalize_offer(job) for job in offers]
     }
-
-
-def get_offer_by_id(offer_id: str) -> dict | None:
-    """
-    Récupère le détail d'une offre unique via son identifiant.
-
-    :param offer_id: identifiant de l'offre France Travail
-    :return: dict normalisé de l'offre, ou None si introuvable/erreur
-    """
-    headers = _auth_headers()
-
-    if headers is None:
-        return None
-
-    url = f"{API_BASE_URL}/{offer_id}"
-
-    try:
-        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-    except requests.RequestException:
-        return None
-
-    if response.status_code not in SUCCESS_STATUS_CODES:
-        return None
-
-    return _normalize_offer(response.json())
-
-
-def get_types_contrats_debug() -> dict | list:
-    """
-    Fonction de debug : lance une recherche large et retourne les filtres
-    disponibles (dont typeContrat) tels que renvoyés par l'API elle-même.
-    """
-    headers = _auth_headers()
-
-    if headers is None:
-        return {"debug": "auth_failed"}
-
-    try:
-        response = requests.get(
-            SEARCH_ENDPOINT,
-            params={"motsCles": ""},
-            headers=headers,
-            timeout=REQUEST_TIMEOUT
-        )
-    except requests.RequestException as exc:
-        return {"debug": "request_exception", "detail": str(exc)}
-
-    if response.status_code not in SUCCESS_STATUS_CODES:
-        return {"debug": "bad_status", "status_code": response.status_code, "body": response.text[:500]}
-
-
-    data = response.json()
-    return data.get("filtresPossibles", [])
