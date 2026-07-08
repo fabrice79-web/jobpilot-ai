@@ -51,6 +51,19 @@ def _enrich_with_travel_duration(jobs: list[dict], depart_ville: str) -> None:
             duration_index += 1
 
 
+def _filter_by_max_travel_duration(jobs: list[dict], max_minutes: int) -> list[dict]:
+    """
+    Ne garde que les offres dont la durée de trajet connue est inférieure ou
+    égale à max_minutes. Les offres sans durée calculée (hors top N enrichi,
+    ou ville introuvable) sont exclues par précaution, faute d'information fiable.
+    """
+    return [
+        job for job in jobs
+        if job.get("travel_duration_minutes") is not None
+        and job["travel_duration_minutes"] <= max_minutes
+    ]
+
+
 @router.get("/communes/search")
 def communes_search(q: str) -> list[dict]:
     """
@@ -73,6 +86,10 @@ def get_jobs(
         Optional[str],
         Query(description="Ville de départ pour le calcul de durée de trajet en voiture")
     ] = None,
+    max_travel_minutes: Annotated[
+        Optional[int],
+        Query(description="Durée de trajet maximale en voiture (minutes, circulation fluide). Nécessite depart_ville.", ge=1)
+    ] = None,
 ) -> dict:
     """Recherche des offres d'emploi selon un mot-clé et une localisation, triées par score."""
 
@@ -90,10 +107,14 @@ def get_jobs(
         key=lambda x: x.get("score", 0),
         reverse=True,
     )
-    jobs["total"] = len(jobs["results"])
 
     if depart_ville:
         _enrich_with_travel_duration(jobs["results"], depart_ville)
+
+        if max_travel_minutes is not None:
+            jobs["results"] = _filter_by_max_travel_duration(jobs["results"], max_travel_minutes)
+
+    jobs["total"] = len(jobs["results"])
 
     return jobs
 
