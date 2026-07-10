@@ -92,22 +92,73 @@ def _contract_type_score(job: Dict[str, Any]) -> int:
     return CONTRACT_TYPE_ADJUSTMENTS.get(contract, 0)
 
 
-def _rome_match_score(job: Dict[str, Any]) -> int:
-    """Bonus si le code ROME de l'offre correspond au profil ciblé."""
+def _rome_match_score(job: Dict[str, Any], target_rome_codes: set[str]) -> int:
+    """Bonus si le code ROME de l'offre correspond aux codes cibles fournis."""
     rome_code = job.get("rome_code")
-    return ROME_MATCH_BONUS if rome_code in TARGET_ROME_CODES else 0
+    return ROME_MATCH_BONUS if rome_code in target_rome_codes else 0
+
+# Termes de niveau de poste qui s'excluent mutuellement : si l'utilisateur
+# recherche l'un, une offre titrée avec un autre de ce même groupe est hors-cible,
+# même si le code ROME correspond (ROMEO classe par métier, pas par niveau).
+JOB_LEVEL_TERMS = ["ingénieur", "technicien", "responsable", "chef de", "directeur", "manager"]
 
 
-def score_job(job: Dict[str, Any], keyword: str) -> int:
+import unicodedata
+
+
+def _strip_accents(text: str) -> str:
+    """Retire les accents d'un texte pour permettre des comparaisons insensibles aux accents."""
+    return "".join(
+        char for char in unicodedata.normalize("NFD", text)
+        if unicodedata.category(char) != "Mn"
+    )
+
+
+def _job_level_mismatch(job: Dict[str, Any], keyword: str) -> bool:
+    """
+    Détecte si le titre de l'offre contient un terme de niveau de poste
+    différent de celui recherché (ex: recherche 'technicien', offre 'ingénieur').
+    """
+    keyword_lower = _strip_accents(keyword.lower())
+    title_lower = _strip_accents(str(job.get("title", "")).lower())
+
+    searched_level = next(
+        (term for term in JOB_LEVEL_TERMS if _strip_accents(term) in keyword_lower),
+        None
+    )
+
+    if not searched_level:
+        return False
+
+    for term in JOB_LEVEL_TERMS:
+        term_normalized = _strip_accents(term)
+        if term_normalized != _strip_accents(searched_level) and term_normalized in title_lower:
+            return True
+
+    return False
+
+JOB_LEVEL_MISMATCH_PENALTY = -50
+
+
+def score_job(job: Dict[str, Any], keyword: str, target_rome_codes: set[str] | None = None) -> int:
     """
     Calcule le score de pertinence global d'une offre :
     correspondance au mot-clé + ajustement selon le type de contrat
-    + bonus si le métier (code ROME) correspond au profil ciblé.
+    + bonus si le métier (code ROME) correspond au profil ciblé, uniquement
+    si le titre a déjà une pertinence mots-clés minimale (évite les faux
+    positifs liés à des offres mal classées par le recruteur)
+    + pénalité si le niveau de poste (technicien/ingénieur/...) ne correspond pas.
     """
     keyword = str(keyword).lower()
+    codes = target_rome_codes or TARGET_ROME_CODES
 
-    return (
-        _keyword_relevance_score(job, keyword)
-        + _contract_type_score(job)
-        + _rome_match_score(job)
-    )
+    keyword_score = _keyword_relevance_score(job, keyword)
+    contract_score = _contract_type_score(job)
+    rome_score = _rome_match_score(job, codes) if keyword_score > 0 else 0
+
+    score = keyword_score + contract_score + rome_score
+
+    if _job_level_mismatch(job, keyword):
+        score += JOB_LEVEL_MISMATCH_PENALTY
+
+    return score

@@ -4,9 +4,14 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Query, HTTPException
 
+from app.services.jooble import search_jooble
 
 from app.services.jobs_service import score_job, get_job_by_id
+
 from app.services.travel_time import get_driving_durations
+
+from app.services.romeo import predict_rome_codes
+
 from app.services.france_travail import (
     search_france_travail,
     get_commune_coordinates,
@@ -17,7 +22,7 @@ router = APIRouter()
 JOB_NOT_FOUND_MESSAGE = "Job not found"
 
 MAX_JOBS_FOR_TRAVEL_TIME = 20
-
+MIN_RELEVANT_SCORE = 20
 
 def _enrich_with_travel_duration(jobs: list[dict], depart_ville: str) -> None:
     """
@@ -96,8 +101,11 @@ def get_jobs(
 
     results = jobs.get("results", [])
 
+    rome_predictions = predict_rome_codes(keyword) if keyword else []
+    target_rome_codes = {p["codeRome"] for p in rome_predictions if p.get("scorePrediction", 0) >= 0.7} or None
+
     enriched = [
-        {**job, "score": score_job(job, keyword)}
+        {**job, "score": score_job(job, keyword, target_rome_codes)}
         for job in results
     ]
 
@@ -106,6 +114,8 @@ def get_jobs(
         key=lambda x: x.get("score", 0),
         reverse=True,
     )
+
+    jobs["results"] = [job for job in jobs["results"] if job.get("score", 0) >= MIN_RELEVANT_SCORE]
 
     if depart_ville:
         _enrich_with_travel_duration(jobs["results"], depart_ville)
@@ -132,4 +142,14 @@ def get_job(job_id: str) -> dict:
 
     return job
 
+@router.get("/debug/jooble-test")
+def debug_jooble_test(keyword: str = "technicien") -> dict:
+    """Route temporaire pour valider l'intégration Jooble avant de la brancher officiellement."""
+    return search_jooble(keyword)
 
+
+
+@router.get("/debug/romeo-test")
+def debug_romeo_test(intitule: str = "technicien méthodes industrialisation") -> list[dict]:
+    """Route temporaire pour valider l'intégration ROMEO."""
+    return predict_rome_codes(intitule)

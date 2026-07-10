@@ -12,7 +12,8 @@ SEARCH_ENDPOINT = f"{API_BASE_URL}/search"
 
 
 TOKEN_URL = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire"
-TOKEN_SCOPE = "api_offresdemploiv2 o2dsoffre"
+TOKEN_SCOPE = "api_offresdemploiv2 o2dsoffre api_romeov2"
+
 
 GEO_API_URL = "https://geo.api.gouv.fr/communes"
 GEO_API_FIELDS = "code,nom,codeDepartement,codesPostaux,population,centre"
